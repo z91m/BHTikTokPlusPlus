@@ -289,7 +289,6 @@ static BOOL isAuthenticationShowed = FALSE;
         return %orig;
     }
     
-    // NSURL *url = self.originURL;
     NSURLComponents *components = [NSURLComponents componentsWithURL:self.originURL resolvingAgainstBaseURL:NO];
     NSString *searchParameter = @"url";
     NSString *searchValue = nil;
@@ -300,12 +299,6 @@ static BOOL isAuthenticationShowed = FALSE;
             break;
         }
     }
-    
-    // In-app browser is used for two-factor authentication with security key,
-    // login will not complete successfully if it's redirected to Safari
-    // if ([urlStr containsString:@"twitter.com/account/"] || [urlStr containsString:@"twitter.com/i/flow/"]) {
-    //     return %orig;
-    // }
 
     if (searchValue) {
         [[UIApplication sharedApplication] openURL:[NSURL URLWithString:searchValue] options:@{} completionHandler:nil];
@@ -824,12 +817,13 @@ static BOOL isAuthenticationShowed = FALSE;
     }
 }
 %end
+
 %hook AWEPlayInteractionUserAvatarElement
 - (void)onFollowViewClicked:(id)sender {
     if ([BHIManager followConfirmation]) {
         showConfirmation(^(void) { %orig; });
     } else {
-        return %orig;
+        %orig;
     }
 }
 %end
@@ -906,19 +900,20 @@ static BOOL isAuthenticationShowed = FALSE;
     }
 }
 %end
+
 %hook AWECommentPanelCell // like/dislike comment confirmation
 - (void)onLikeAction:(id)arg1 {
     if ([BHIManager likeCommentConfirmation]) {
         showConfirmation(^(void) { %orig; });
     } else {
-        return %orig;
+        %orig;
     }
 }
 - (void)onDislikeAction:(id)arg1 {
     if ([BHIManager dislikeCommentConfirmation]) {
         showConfirmation(^(void) { %orig; });
     } else {
-        return %orig;
+        %orig;
     }
 }
 %end
@@ -961,6 +956,7 @@ static BOOL isAuthenticationShowed = FALSE;
     return %orig;
 }
 %end
+
 %hook AWEPlayVideoPlayerController
 - (void)containerDidFullyDisplayWithReason:(NSInteger)arg1 {
     if ([[[self container] parentViewController] isKindOfClass:%c(AWENewFeedTableViewController)] && [BHIManager skipRecommendations]) {
@@ -974,6 +970,7 @@ static BOOL isAuthenticationShowed = FALSE;
     }
 }
 %end
+
 %hook AWEProfileEditTextViewController
 - (NSInteger)maxTextLength {
     if ([BHIManager extendedBio]) {
@@ -983,24 +980,17 @@ static BOOL isAuthenticationShowed = FALSE;
     return %orig;
 }
 %end
+
 %hook AWEPlayInteractionAuthorView
 %new - (NSString *)emojiForCountryCode:(NSString *)countryCode {
-    // Convert the country code to uppercase
     NSString *uppercaseCountryCode = [countryCode uppercaseString];
-    
-    // Ensure the country code has exactly two characters
     if (uppercaseCountryCode.length != 2) {
         return nil;
     }
-    
-    // Convert the country code to the regional indicator symbols
     uint32_t firstLetter = [uppercaseCountryCode characterAtIndex:0] + 0x1F1E6 - 'A';
     uint32_t secondLetter = [uppercaseCountryCode characterAtIndex:1] + 0x1F1E6 - 'A';
-    
-    // Create the emoji using the regional indicator symbols
     NSString *flagEmoji = [[NSString alloc] initWithBytes:&firstLetter length:4 encoding:NSUTF32LittleEndianStringEncoding];
     flagEmoji = [flagEmoji stringByAppendingString:[[NSString alloc] initWithBytes:&secondLetter length:4 encoding:NSUTF32LittleEndianStringEncoding]];
-    
     return flagEmoji;
 }
 
@@ -1031,6 +1021,7 @@ static BOOL isAuthenticationShowed = FALSE;
     }
 }
 %end
+
 %hook TIKTOKProfileHeaderView // copy profile information
 - (id)initWithFrame:(CGRect)arg1 {
     self = %orig;
@@ -1052,10 +1043,8 @@ static BOOL isAuthenticationShowed = FALSE;
     else {
         %orig;
     }
-
 }
 %end
-
 
 %hook AWEFeedViewTemplateCell
 %property (nonatomic, strong) JGProgressHUD *hud;
