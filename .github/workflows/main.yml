@@ -27,7 +27,7 @@ jobs:
         with:
           ref: ${{ inputs.branch || github.ref }}
           path: BHTikTokPlusPlus
-          submodules: false   # لمنع خطأ 404 الخاص بـ FLEXing
+          submodules: false   # يتجاوز خطأ FLEXing المفقود
 
       - name: Install dependencies
         run: brew install make ldid dpkg
@@ -37,30 +37,17 @@ jobs:
           echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
           echo "THEOS=${{ github.workspace }}/theos" >> $GITHUB_ENV
 
-      - name: Set Theos commit
+      - name: Setup Theos & iOS SDK
         run: |
-          echo "THEOS_COMMIT=88506b2" >> $GITHUB_ENV
-
-      - name: Cache Theos
-        id: cache-theos
-        uses: actions/cache@v6
-        with:
-          path: theos
-          key: BHTikTok-16.5-SDK-${{ env.THEOS_COMMIT }}
-
-      - name: Setup Theos
-        if: ${{ steps.cache-theos.outputs.cache-hit != 'true' }}
-        run: |
-            git clone --quiet --recurse-submodules https://github.com/roothide/theos.git theos
-            cd theos
-            git checkout 88506b2
-            git submodule update --init --recursive
-            cd ..
-            git clone --quiet --depth=1 -n --filter=tree:0 https://github.com/theos/sdks.git
-            cd sdks
-            git sparse-checkout set --no-cone iPhoneOS16.5.sdk
-            git checkout --quiet
-            mv *.sdk "$THEOS/sdks"
+          # سحب Theos مباشرة بدون التقييد بـ commit محدد
+          git clone --recursive https://github.com/theos/theos.git theos
+          
+          # سحب الـ SDK المناسب
+          git clone --quiet --depth=1 -n --filter=tree:0 https://github.com/theos/sdks.git sdks
+          cd sdks
+          git sparse-checkout set --no-cone iPhoneOS16.5.sdk
+          git checkout --quiet
+          mv *.sdk "$THEOS/sdks"
 
       - name: Fix Theos od broken pipe issue
         run: sed -i '' 's/od -c "$i" | head/od -c "$i" 2>\/dev\/null | head/g' $THEOS/bin/convert_xml_plist.sh || true
@@ -68,7 +55,7 @@ jobs:
       - name: Build and Extract Files
         shell: bash
         run: |
-          # 1. استخراج رقم الإصدار اسم التويك
+          # 1. استخراج رقم الإصدار من ملف control
           VERSION=$(grep '^Version:' BHTikTokPlusPlus/control | cut -d ' ' -f2)
           echo "TWEAK_VERSION=$VERSION" >> $GITHUB_ENV
 
@@ -76,7 +63,7 @@ jobs:
           cd ${{ github.workspace }}
           zip -r "BHTikTokPlusPlus_Source_Code_${VERSION}.zip" BHTikTokPlusPlus -x "BHTikTokPlusPlus/.git/*" "BHTikTokPlusPlus/.theos/*" "BHTikTokPlusPlus/packages/*"
 
-          # 3. الانتقال للمجلد للبناء واستخراج dylib
+          # 3. الانتقال للمجلد للبناء واستخراج ملف dylib
           cd BHTikTokPlusPlus
           make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
           
@@ -86,7 +73,7 @@ jobs:
           FOUND_DYLIB=$(find temp_extracted -name "*.dylib" | head -n 1)
           
           if [ -n "$FOUND_DYLIB" ]; then
-            # نسخ ملف dylib باسم BHTikTokPlusPlus.dylib للمجلد الرئيسي
+            # نسخ ملف dylib إلى المجلد الرئيسي
             cp "$FOUND_DYLIB" "${{ github.workspace }}/BHTikTokPlusPlus.dylib"
           fi
           rm -rf temp_extracted
