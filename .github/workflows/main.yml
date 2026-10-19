@@ -60,7 +60,7 @@ jobs:
         with:
           path: main
           ref: ${{ github.event.inputs.commit_id || github.ref }}
-          submodules: recursive
+          submodules: false   # <--- تم التعديل هنا لمنع الخطأ
 
       - name: Install Dependencies
         run: brew install make dpkg ldid
@@ -75,7 +75,7 @@ jobs:
           repository: theos/theos
           ref: master
           path: theos
-          submodules: recursive
+          submodules: recursive   # هذه تركناها كما هي لأن ذاك هو Theos الأصلي ويحتاجها
 
       - name: Install cyan
         if: inputs.deploy_format == 'sideloaded' || inputs.deploy_format == 'trollstore'
