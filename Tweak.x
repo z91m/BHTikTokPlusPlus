@@ -811,7 +811,9 @@ static BOOL isAuthenticationShowed = FALSE;
 %hook UIButton // follow confirmation broken 
 - (void)_onTouchUpInside {
     if ([BHIManager followConfirmation] && [self.currentTitle isEqualToString:@"Follow"]) {
-        showConfirmation(^(void) { %orig; });
+        showConfirmation(^(void) {
+            %orig;
+        });
     } else {
         %orig;
     }
