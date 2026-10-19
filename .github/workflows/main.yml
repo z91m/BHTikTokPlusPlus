@@ -1,47 +1,14 @@
-name: Build BHTikTokPlusPlus
+name: Build BHTikTokPlusPlus (dylib)
 
 on:
+  push:
+    branches: [ "main" ]
   workflow_dispatch:
     inputs:
-      sdk_version:
-        description: "iOS SDK Version"
-        default: "16.5"
+      branch:
+        description: 'Branch to build from'
         required: true
-        type: string
-      target_version:
-        description: "Target iOS Version"
-        default: "15.0"
-        required: true
-      decrypted_ipa_url:
-        description: "Direct URL of a Decrypted TikTok IPA"
-        default: ""
-        required: true
-        type: string
-      deploy_format:
-        description: "Deployment format"
-        default: sideloaded
-        required: true
-        type: choice
-        options:
-          - sideloaded
-          - trollstore
-          - rootless
-          - rootfull
-      commit_id:
-        description: "(Optional) Commit ID to build at"
-        default: ""
-        required: false
-        type: string
-      upload_artifact:
-        description: "Upload Artifact (Public)"
-        default: true
-        required: false
-        type: boolean
-      create_release:
-        description: "Create a draft release"
-        default: false
-        required: false
-        type: boolean
+        default: 'main'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -49,128 +16,100 @@ concurrency:
 
 jobs:
   build:
-    name: Build Tweak
+    name: Build BHTikTokPlusPlus & Upload dylib
     runs-on: macos-latest
     permissions:
       contents: write
 
     steps:
-      - name: Checkout Main
+      - name: Checkout Current Repository
         uses: actions/checkout@v6
         with:
-          path: main
-          ref: ${{ github.event.inputs.commit_id || github.ref }}
-          submodules: false   # <--- تم التعديل هنا لمنع الخطأ
+          ref: ${{ inputs.branch || github.ref }}
+          path: BHTikTokPlusPlus
+          submodules: false   # لمنع خطأ 404 الخاص بـ FLEXing
 
-      - name: Install Dependencies
-        run: brew install make dpkg ldid
+      - name: Install dependencies
+        run: brew install make ldid dpkg
 
-      - name: Add GNU Make to PATH
+      - name: Set PATH environment variables
         run: |
-          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+          echo "THEOS=${{ github.workspace }}/theos" >> $GITHUB_ENV
 
-      - name: Download Theos
-        uses: actions/checkout@v6
-        with:
-          repository: theos/theos
-          ref: master
-          path: theos
-          submodules: recursive   # هذه تركناها كما هي لأن ذاك هو Theos الأصلي ويحتاجها
+      - name: Set Theos commit
+        run: |
+          echo "THEOS_COMMIT=88506b2" >> $GITHUB_ENV
 
-      - name: Install cyan
-        if: inputs.deploy_format == 'sideloaded' || inputs.deploy_format == 'trollstore'
-        run: pip install https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip
-
-      - name: iOS SDK Caching
-        id: SDK
+      - name: Cache Theos
+        id: cache-theos
         uses: actions/cache@v6
-        env:
-          cache-name: iOS-${{ inputs.sdk_version }}-SDK
         with:
-          path: theos/sdks/
-          key: ${{ env.cache-name }}
-          restore-keys: ${{ env.cache-name }}
+          path: theos
+          key: BHTikTok-16.5-SDK-${{ env.THEOS_COMMIT }}
 
-      - name: Download iOS SDK
-        if: steps.SDK.outputs.cache-hit != 'true'
+      - name: Setup Theos
+        if: ${{ steps.cache-theos.outputs.cache-hit != 'true' }}
         run: |
-          git clone -n --depth=1 --filter=tree:0 https://github.com/theos/sdks/
-          cd sdks
-          git sparse-checkout set --no-cone iPhoneOS${{ inputs.sdk_version }}.sdk
-          git checkout
-          mv ./*.sdk "${THEOS}/sdks"
-        env:
-          THEOS: ${{ github.workspace }}/theos
+            git clone --quiet --recurse-submodules https://github.com/roothide/theos.git theos
+            cd theos
+            git checkout 88506b2
+            git submodule update --init --recursive
+            cd ..
+            git clone --quiet --depth=1 -n --filter=tree:0 https://github.com/theos/sdks.git
+            cd sdks
+            git sparse-checkout set --no-cone iPhoneOS16.5.sdk
+            git checkout --quiet
+            mv *.sdk "$THEOS/sdks"
 
-      - name: Get Tweak Info
-        id: tweak_info
-        run: |
-          TWEAK_NAME=$(sed -n 's/^Name: *//p' main/control)
-          TWEAK_VERSION=$(awk '/Version:/ {print $2}' main/control)
-          echo "name=${TWEAK_NAME}" >> "$GITHUB_OUTPUT"
-          echo "version=${TWEAK_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "$TWEAK_NAME $TWEAK_VERSION"
+      - name: Fix Theos od broken pipe issue
+        run: sed -i '' 's/od -c "$i" | head/od -c "$i" 2>\/dev\/null | head/g' $THEOS/bin/convert_xml_plist.sh || true
 
-      - name: Prepare TikTok IPA
-        if: inputs.deploy_format == 'sideloaded' || inputs.deploy_format == 'trollstore'
-        id: tiktok_version
+      - name: Build and Extract Files
+        shell: bash
         run: |
-          mkdir -p main/packages
-          wget "$IPA_URL" --no-verbose -O main/packages/com.zhiliaoapp.musically.ipa
-          unzip -q main/packages/com.zhiliaoapp.musically.ipa -d main/tmp
+          # 1. استخراج رقم الإصدار اسم التويك
+          VERSION=$(grep '^Version:' BHTikTokPlusPlus/control | cut -d ' ' -f2)
+          echo "TWEAK_VERSION=$VERSION" >> $GITHUB_ENV
+
+          # 2. ضغط ملفات السورس كود
+          cd ${{ github.workspace }}
+          zip -r "BHTikTokPlusPlus_Source_Code_${VERSION}.zip" BHTikTokPlusPlus -x "BHTikTokPlusPlus/.git/*" "BHTikTokPlusPlus/.theos/*" "BHTikTokPlusPlus/packages/*"
+
+          # 3. الانتقال للمجلد للبناء واستخراج dylib
+          cd BHTikTokPlusPlus
+          make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
           
-          # استخراج مسار تطبيق تيك توك ورقم إصداره تلقائياً
-          APP_PATH=$(find main/tmp/Payload -maxdepth 1 -name "*.app" | head -n 1)
-          TIKTOK_VERSION=$(grep -A 1 '<key>CFBundleShortVersionString</key>' "$APP_PATH/Info.plist" |
-            grep '<string>' | awk -F'[><]' '{print $3}')
-            
-          echo "version=${TIKTOK_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "TikTok Version: $TIKTOK_VERSION"
-        env:
-          IPA_URL: ${{ inputs.decrypted_ipa_url }}
-
-      - name: Build Package
-        run: |
-          cd ${{ github.workspace }}/main
-          sed -i '' "s/^TARGET.*$/TARGET := iphone:clang:${{ inputs.sdk_version }}:${{ inputs.target_version }}/" Makefile
-          if [ -f "./build.sh" ]; then
-            chmod +x ./build.sh
-            ./build.sh --${{ inputs.deploy_format }}
-          else
-            make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=${{ inputs.deploy_format }}
+          DEB_FILE=$(ls packages/*.deb | head -n 1)
+          mkdir -p temp_extracted
+          dpkg-deb -x "$DEB_FILE" temp_extracted
+          FOUND_DYLIB=$(find temp_extracted -name "*.dylib" | head -n 1)
+          
+          if [ -n "$FOUND_DYLIB" ]; then
+            # نسخ ملف dylib باسم BHTikTokPlusPlus.dylib للمجلد الرئيسي
+            cp "$FOUND_DYLIB" "${{ github.workspace }}/BHTikTokPlusPlus.dylib"
           fi
-        env:
-          THEOS: ${{ github.workspace }}/theos
+          rm -rf temp_extracted
+          make clean
 
-      - name: Rename IPA to include TikTok version
-        if: inputs.deploy_format == 'sideloaded' || inputs.deploy_format == 'trollstore'
-        run: |
-          mv "main/packages/$(ls -t main/packages | head -n1)" \
-             "main/packages/${{ steps.tweak_info.outputs.name }}-${{ inputs.deploy_format }}_v${{ steps.tweak_info.outputs.version }}_TikTok${{ steps.tiktok_version.outputs.version }}.${IPA_EXT}"
-        env:
-          IPA_EXT: ${{ inputs.deploy_format == 'trollstore' && 'tipa' || 'ipa' }}
-
-      - name: Pass package name
-        id: package_name
-        run: |
-          echo "package=$(ls -t main/packages | head -n1)" >> "$GITHUB_OUTPUT"
-
-      - name: Upload Artifact
-        if: ${{ inputs.upload_artifact }}
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.tweak_info.outputs.name }}_${{ steps.tweak_info.outputs.version }}
-          path: ${{ github.workspace }}/main/packages/${{ steps.package_name.outputs.package }}
-          if-no-files-found: error
+         name: BHTikTokPlusPlus v${{ env.TWEAK_VERSION }}
+         path: |
+           ${{ github.workspace }}/BHTikTokPlusPlus.dylib
+           ${{ github.workspace }}/BHTikTokPlusPlus_Source_Code_*.zip
+         if-no-files-found: error
+         overwrite: true
 
-      - name: Create Draft Release
-        if: ${{ inputs.create_release }}
-        id: create_release
+      - name: Create a draft release
         uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v${{ steps.tweak_info.outputs.version }}
-          name: v${{ steps.tweak_info.outputs.version }} - ${{ steps.tweak_info.outputs.name }}
-          files: main/packages/${{ steps.package_name.outputs.package }}
+          tag_name: v${{ env.TWEAK_VERSION }}
+          name: v${{ env.TWEAK_VERSION }} - BHTikTokPlusPlus
+          files: |
+            BHTikTokPlusPlus.dylib
+            BHTikTokPlusPlus_Source_Code_*.zip
           draft: true
